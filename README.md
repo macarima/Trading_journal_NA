@@ -33,3 +33,5 @@ date	futures	stock	note	rate
 ```
 
 자세한 정보 및 설치 방법은 Install.md를 참고하시기 바랍니다.
+
+GPL 3.0 라이센스, 자유롭게 수정 및 배포 가능합니다.
