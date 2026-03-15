@@ -1,5 +1,10 @@
 # Trading journal for futures and equity
 
+제가 사용하려고 만든 간단한 미국장 트레이딩용 저널 프로그램입니다.
+매일의 매매 기록을 남길 수 있게 만들었습니다.
+Electron 프레임워크를 사용했으며, 코딩은 클로드AI를 이용했습니다.
+
+
 > 미국 주식 & 선물 매매 기록을 관리하는 데스크톱 앱
 
 macOS · Windows 지원 | TSV 기반 데이터 저장 | 환율·지수 자동 수집 | 세금 계산 | PDF 보고서
@@ -91,9 +96,9 @@ npm run electron:build
 ## TSV 파일 형식
 
 ```
-date	futures	stock	note	rate	nasdaq	sp500
-2026-01-02	1821	1528.80	메모	1452.8	-0.17	0.19
-2026-01-05	-947	-424.50		1452.8	0.77	0.64
+date  futures stock note  rate  nasdaq  sp500
+2026-01-02  1821  1528.80 메모  1452.8  -0.17 0.19
+2026-01-05  -947  -424.50   1452.8  0.77  0.64
 ```
 
 | 필드 | 설명 |
