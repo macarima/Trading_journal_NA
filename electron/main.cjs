@@ -177,6 +177,52 @@ async function fetchIndexChange(symbol, dateStr) {
   return parseFloat(((curr - prev) / prev * 100).toFixed(2));
 }
 
+// ── Fetch monthly index change (prev month last close → target month last close) ──
+async function fetchMonthlyIndexChange(symbol, year, month) {
+  // Get data spanning from prev month to end of target month
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const p1 = Math.floor(new Date(`${prevYear}-${String(prevMonth).padStart(2,'0')}-15`).getTime() / 1000);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const p2 = Math.floor(new Date(`${nextYear}-${String(nextMonth).padStart(2,'0')}-05`).getTime() / 1000);
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${p1}&period2=${p2}&interval=1d`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }
+  });
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  const chart = data.chart?.result?.[0];
+  if (!chart || !chart.timestamp) return null;
+
+  const timestamps = chart.timestamp;
+  const closes = chart.indicators?.quote?.[0]?.close || [];
+
+  // Find last close of prev month and last close of target month
+  let prevClose = null, targetClose = null;
+  for (let i = 0; i < timestamps.length; i++) {
+    const d = new Date(timestamps[i] * 1000);
+    const m = d.getUTCMonth() + 1;
+    const y = d.getUTCFullYear();
+    if (closes[i] == null) continue;
+    if (y === prevYear && m === prevMonth) prevClose = closes[i];
+    if (y < year || (y === year && m < month)) prevClose = closes[i]; // catch edge cases
+    if (y === year && m === month) targetClose = closes[i];
+  }
+
+  if (!prevClose || !targetClose) return null;
+  return parseFloat(((targetClose - prevClose) / prevClose * 100).toFixed(2));
+}
+
+ipcMain.handle('fetch-monthly-index', async (_event, year, month) => {
+  const result = { nasdaq: null, sp500: null };
+  try { result.nasdaq = await fetchMonthlyIndexChange('%5ENDX', year, month); } catch {}
+  try { result.sp500 = await fetchMonthlyIndexChange('%5EGSPC', year, month); } catch {}
+  return result;
+});
+
 // ── PDF Export ──
 ipcMain.handle('export-pdf', async (_event, htmlContent) => {
   const { filePath } = await dialog.showSaveDialog({
