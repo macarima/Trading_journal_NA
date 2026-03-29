@@ -58,6 +58,42 @@ function fmtPct(n){
 }
 function colorClass(n){ return n>0?"profit":n<0?"loss":"zero"; }
 
+// Y축 눈금 생성: 대칭형 (일일손익)
+function niceTicks(maxAbs, steps=5) {
+  if(maxAbs<=0) return [0];
+  const raw=maxAbs/steps;
+  const mag=Math.pow(10,Math.floor(Math.log10(raw)));
+  const candidates=[1,1.5,2,2.5,3,4,5,8,10];
+  const nice=candidates.find(m=>m*mag>=raw)*mag;
+  const ticks=[0];
+  for(let i=1;i<=steps;i++){
+    const v=rd(nice*i,2);
+    if(v<=maxAbs*1.15){ticks.push(v);ticks.push(-v);}
+  }
+  return ticks.sort((a,b)=>a-b);
+}
+// Y축 눈금 생성: 비대칭형 (누적수익)
+function niceTicksRange(min,max,steps=5) {
+  if(min===max) return [min];
+  const range=max-min;
+  const raw=range/steps;
+  const mag=Math.pow(10,Math.floor(Math.log10(raw)));
+  const candidates=[1,1.5,2,2.5,3,4,5,8,10];
+  const nice=candidates.find(m=>m*mag>=raw)*mag;
+  const ticks=[];
+  const start=Math.floor(min/nice)*nice;
+  for(let v=start;v<=max+nice*0.5;v=rd(v+nice,2)) ticks.push(rd(v,2));
+  // 반드시 0을 포함
+  if(!ticks.includes(0)&&min<=0&&max>=0) ticks.push(0);
+  return [...new Set(ticks)].sort((a,b)=>a-b);
+}
+function fmtCompact(n) {
+  if(n==null||isNaN(n)) return "—";
+  const abs=Math.abs(n);
+  const s=abs>=1000?(abs/1000).toFixed(1)+"K":abs.toFixed(0);
+  return (n>0?"+":n<0?"-":"")+s;
+}
+
 function MiniBar({value,max}){
   const pct=max===0?0:Math.min(Math.abs(value)/max*100,100);
   return(
@@ -384,7 +420,15 @@ export default function TradingJournal() {
     const w=dp.filter(d=>d>0).length, l=dp.filter(d=>d<0).length;
     const maxA=Math.max(...dp.map(Math.abs),1);
     let c=0;const cum=monthRecords.map(r=>{c=rd(c+r.futures+r.stock,4);return c;});
-    return{totalFutures:tF,totalStock:tS,totalDaily:tD,totalKRW:tK,lastRate,winDays:w,lossDays:l,maxAbs:maxA,cumulative:cum};
+    // 복리 월간 등락폭
+    let ndxCum=1,spxCum=1;
+    monthRecords.forEach(r=>{
+      if(r.nasdaq) ndxCum*=(1+r.nasdaq/100);
+      if(r.sp500) spxCum*=(1+r.sp500/100);
+    });
+    const monthNdx=rd((ndxCum-1)*100,2);
+    const monthSpx=rd((spxCum-1)*100,2);
+    return{totalFutures:tF,totalStock:tS,totalDaily:tD,totalKRW:tK,lastRate,winDays:w,lossDays:l,maxAbs:maxA,cumulative:cum,monthNdx,monthSpx};
   },[monthRecords]);
 
   const yearStats=useMemo(()=>{
@@ -454,15 +498,16 @@ export default function TradingJournal() {
 
   const [bulkFetching,setBulkFetching]=useState(false);
   const [bulkProgress,setBulkProgress]=useState("");
+  const [monthlyIndex,setMonthlyIndex]=useState({}); // { "2026.3": {nasdaq:-7.32, sp500:-7.41} }
 
   async function handleBulkFetch(){
-    if(!isElectron)return;
+    if(!isElectron||!activeMonth)return;
     setBulkFetching(true);
     const next=[...records];
     const targets=monthRecords;
     let done=0;
     for(const rec of targets){
-      setBulkProgress(`${++done} / ${targets.length}`);
+      setBulkProgress(`${++done} / ${targets.length+1}`);
       try{
         const d=await window.api.fetchMarketData(rec.date);
         const gi=next.findIndex(x=>x===rec);
@@ -477,6 +522,15 @@ export default function TradingJournal() {
       await new Promise(resolve=>setTimeout(resolve,300));
     }
     persist(next);
+    // Fetch actual monthly index change via API
+    setBulkProgress(`월간 지수...`);
+    try{
+      const [y,m]=activeMonth.split(".");
+      const mi=await window.api.fetchMonthlyIndex(parseInt(y),parseInt(m));
+      if(mi){
+        setMonthlyIndex(prev=>({...prev,[activeMonth]:mi}));
+      }
+    }catch{}
     setBulkFetching(false);
     setBulkProgress("");
   }
@@ -485,7 +539,7 @@ export default function TradingJournal() {
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0e17",color:"#64748b",fontFamily:"'DM Sans',sans-serif"}}>불러오는 중...</div>
   );
 
-  const chartW=680,chartH=200,pad={t:20,r:20,b:30,l:60};
+  const chartW=700,chartH=240,pad={t:20,r:20,b:30,l:65};
 
   return(
     <>
@@ -494,9 +548,9 @@ export default function TradingJournal() {
         :root{--bg:#0a0e17;--surface:#111827;--surface-2:#1e293b;--surface-3:#293548;--border:#2a3444;--text:#e2e8f0;--text-2:#94a3b8;--text-3:#64748b;--green:#22c55e;--green-bg:rgba(34,197,94,0.08);--red:#ef4444;--red-bg:rgba(239,68,68,0.08);--accent:#6366f1;--accent-dim:rgba(99,102,241,0.15);--yellow:#eab308;}
         *{margin:0;padding:0;box-sizing:border-box}
         body,#root{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-        .app{max-width:1040px;margin:0 auto;padding:24px 16px 60px}
-        .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:16px;padding-top:8px;border-bottom:1px solid var(--border);-webkit-app-region:drag}
-        .header button,.header a,.header .save-badge{-webkit-app-region:no-drag}
+        .drag-bar{position:fixed;top:0;left:0;right:0;height:38px;-webkit-app-region:drag;z-index:200}
+        .app{max-width:1040px;margin:0 auto;padding:24px 16px 60px;padding-top:44px}
+        .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:16px;padding-top:8px;border-bottom:1px solid var(--border)}
         .header-left h1{font-size:20px;font-weight:700;letter-spacing:-0.5px;background:linear-gradient(135deg,#e2e8f0,#6366f1);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
         .header-left p{font-size:11px;color:var(--text-3);margin-top:1px;font-family:'JetBrains Mono',monospace}
         .header-right{display:flex;gap:8px;align-items:center}
@@ -603,6 +657,7 @@ export default function TradingJournal() {
         @media(max-width:640px){.year-bar{grid-template-columns:repeat(2,1fr)}.tax-bar{grid-template-columns:1fr}.month-stats{grid-template-columns:repeat(3,1fr)}.header{flex-direction:column;gap:10px;align-items:flex-start}}
       `}</style>
 
+      <div className="drag-bar"/>
       <div className="app">
         {/* Header */}
         <div className="header">
@@ -705,15 +760,24 @@ export default function TradingJournal() {
                       </tr>
                     );
                   })}
-                  <tr className="total-row">
-                    <td>합계</td>
-                    <td className={colorClass(stats.totalFutures)}>{fmt(stats.totalFutures)}</td>
-                    <td className={colorClass(stats.totalStock)}>{fmt(stats.totalStock,4)}</td>
-                    <td className={colorClass(stats.totalDaily)}>{fmt(stats.totalDaily,2)}</td>
-                    <td></td>
-                    <td className={colorClass(stats.totalKRW)}>{fmtKRW(stats.totalKRW)}</td>
-                    <td></td><td></td><td></td><td></td>
-                  </tr>
+                  {(()=>{
+                    const mi=monthlyIndex[activeMonth];
+                    const ndx=mi?.nasdaq??stats.monthNdx;
+                    const spx=mi?.sp500??stats.monthSpx;
+                    return(
+                      <tr className="total-row">
+                        <td>합계</td>
+                        <td className={colorClass(stats.totalFutures)}>{fmt(stats.totalFutures)}</td>
+                        <td className={colorClass(stats.totalStock)}>{fmt(stats.totalStock,4)}</td>
+                        <td className={colorClass(stats.totalDaily)}>{fmt(stats.totalDaily,2)}</td>
+                        <td></td>
+                        <td className={colorClass(stats.totalKRW)}>{fmtKRW(stats.totalKRW)}</td>
+                        <td className={colorClass(ndx)}>{fmtPct(ndx)}</td>
+                        <td className={colorClass(spx)}>{fmtPct(spx)}</td>
+                        <td></td><td></td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             )}
@@ -729,14 +793,16 @@ export default function TradingJournal() {
                 {(()=>{
                   const n=monthRecords.length;const iW=chartW-pad.l-pad.r;const iH=chartH-pad.t-pad.b;
                   const bW=Math.min(iW/n*0.7,22);const gap=iW/n;const mV=stats.maxAbs;
-                  const yS=v=>pad.t+iH/2-(v/mV)*(iH/2);const zY=pad.t+iH/2;
+                  const ticks=niceTicks(mV,4);
+                  const tickMax=Math.max(...ticks.map(Math.abs),mV);
+                  const yS=v=>pad.t+iH/2-(v/tickMax)*(iH/2);const zY=pad.t+iH/2;
                   return(<g>
-                    <line x1={pad.l} x2={chartW-pad.r} y1={zY} y2={zY} stroke="var(--border)" strokeWidth={1}/>
-                    <line x1={pad.l} x2={chartW-pad.r} y1={yS(mV*0.5)} y2={yS(mV*0.5)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="4,4"/>
-                    <line x1={pad.l} x2={chartW-pad.r} y1={yS(-mV*0.5)} y2={yS(-mV*0.5)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="4,4"/>
-                    <text x={pad.l-8} y={yS(mV*0.5)} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">{(mV*0.5).toFixed(0)}</text>
-                    <text x={pad.l-8} y={zY} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">0</text>
-                    <text x={pad.l-8} y={yS(-mV*0.5)} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">{(-mV*0.5).toFixed(0)}</text>
+                    {ticks.map((t,i)=>(
+                      <g key={i}>
+                        <line x1={pad.l} x2={chartW-pad.r} y1={yS(t)} y2={yS(t)} stroke="var(--border)" strokeWidth={t===0?1:0.5} strokeDasharray={t===0?"none":"4,4"}/>
+                        <text x={pad.l-8} y={yS(t)} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">{fmtCompact(t)}</text>
+                      </g>
+                    ))}
                     {monthRecords.map((r,i)=>{
                       const d=r.futures+r.stock;const x=pad.l+gap*i+gap/2-bW/2;
                       const top=d>=0?yS(d):zY;const h=Math.abs(yS(d)-zY);
@@ -755,19 +821,27 @@ export default function TradingJournal() {
               <svg width={chartW} height={chartH} viewBox={`0 0 ${chartW} ${chartH}`} style={{width:"100%",height:"auto"}}>
                 {(()=>{
                   const cum=stats.cumulative;const n=cum.length;const iW=chartW-pad.l-pad.r;const iH=chartH-pad.t-pad.b;
-                  const mC=Math.max(...cum.map(Math.abs),1);
-                  const yS=v=>pad.t+iH/2-(v/mC)*(iH/2);const xS=i=>pad.l+(i/(n-1||1))*iW;const zY=yS(0);
+                  const cumMin=Math.min(0,...cum);const cumMax=Math.max(0,...cum);
+                  const ticks=niceTicksRange(cumMin,cumMax,4);
+                  const tMin=Math.min(...ticks);const tMax=Math.max(...ticks);
+                  const range=tMax-tMin||1;
+                  const yS=v=>pad.t+iH-(v-tMin)/range*iH;
+                  const xS=i=>pad.l+(i/(n-1||1))*iW;
+                  const zY=yS(0);
                   const pathD=cum.map((v,i)=>`${i===0?"M":"L"}${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ");
                   const areaD=pathD+` L${xS(n-1).toFixed(1)},${zY} L${xS(0)},${zY} Z`;
                   const last=cum[cum.length-1];const lc=last>=0?"var(--green)":"var(--red)";
                   return(<g>
-                    <line x1={pad.l} x2={chartW-pad.r} y1={zY} y2={zY} stroke="var(--border)" strokeWidth={1}/>
+                    {ticks.map((t,i)=>(
+                      <g key={i}>
+                        <line x1={pad.l} x2={chartW-pad.r} y1={yS(t)} y2={yS(t)} stroke="var(--border)" strokeWidth={t===0?1:0.5} strokeDasharray={t===0?"none":"4,4"}/>
+                        <text x={pad.l-8} y={yS(t)} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">{fmtCompact(t)}</text>
+                      </g>
+                    ))}
                     <defs><linearGradient id="cG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={last>=0?"var(--green)":"var(--red)"} stopOpacity={0.2}/><stop offset="100%" stopColor={last>=0?"var(--green)":"var(--red)"} stopOpacity={0}/></linearGradient></defs>
                     <path d={areaD} fill="url(#cG)"/><path d={pathD} fill="none" stroke={lc} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
                     <circle cx={xS(n-1)} cy={yS(last)} r={4} fill={lc}/>
-                    <text x={xS(n-1)+8} y={yS(last)} fill={lc} fontSize={10} fontWeight={600} dominantBaseline="middle" fontFamily="JetBrains Mono">{fmt(last,1)}</text>
-                    <text x={pad.l-8} y={yS(mC)} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">{mC.toFixed(0)}</text>
-                    <text x={pad.l-8} y={zY} fill="var(--text-3)" fontSize={9} textAnchor="end" dominantBaseline="middle" fontFamily="JetBrains Mono">0</text>
+                    <text x={Math.min(xS(n-1)+8,chartW-pad.r-50)} y={Math.max(yS(last),pad.t+12)} fill={lc} fontSize={10} fontWeight={600} dominantBaseline="middle" fontFamily="JetBrains Mono">{fmtCompact(last)}</text>
                   </g>);
                 })()}
               </svg>
